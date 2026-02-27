@@ -5,7 +5,7 @@ import {
   type MatchSummaryDTO,
   type TossDecision
 } from "@culbcric/shared";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { io } from "socket.io-client";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:4000";
@@ -35,6 +35,8 @@ type Team = {
 type Player = {
   id: string;
   teamId: string;
+  userId?: string | null;
+  playerId?: string | null;
   name: string;
   role: string;
   careerStat?: {
@@ -262,6 +264,8 @@ function resolveLeadership(
 }
 
 export default function App(): JSX.Element {
+  const authLoadVersionRef = useRef(0);
+  const userMenuRef = useRef<HTMLDivElement | null>(null);
   const [teams, setTeams] = useState<Team[]>([]);
   const [matches, setMatches] = useState<MatchListItem[]>([]);
   const [activeMatchId, setActiveMatchId] = useState<string>("");
@@ -269,11 +273,15 @@ export default function App(): JSX.Element {
   const [setupMatchId, setSetupMatchId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [activeTopTab, setActiveTopTab] = useState<"setup" | "live" | "stats">("setup");
+  const [activeTopTab, setActiveTopTab] = useState<"home" | "setup" | "live" | "stats">("home");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authAccountType, setAuthAccountType] = useState<"personal" | "team">("personal");
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [homeSelectedTeamId, setHomeSelectedTeamId] = useState<string>("ALL");
+  const [homeStatsTab, setHomeStatsTab] = useState<"bat" | "bowl" | "field">("bat");
   const [selectedStatsTeamId, setSelectedStatsTeamId] = useState<string>("");
   const [selectedStatsPlayerId, setSelectedStatsPlayerId] = useState<string>("");
 
@@ -372,6 +380,9 @@ export default function App(): JSX.Element {
       return;
     }
 
+    authLoadVersionRef.current += 1;
+    const currentVersion = authLoadVersionRef.current;
+
     if (!authUser) {
       setTeams([]);
       setMatches([]);
@@ -381,14 +392,40 @@ export default function App(): JSX.Element {
       setActiveMatchId("");
       setActiveMatch(null);
       setSetupMatchId("");
-      setActiveTopTab("setup");
+      setActiveTopTab("home");
       return;
     }
 
-    void Promise.all([loadTeams(authUser), loadMatches(), loadTournaments()]).catch((err: unknown) =>
-      setError((err as Error).message)
-    );
+    void Promise.all([loadTeams(authUser, currentVersion), loadMatches(currentVersion), loadTournaments(currentVersion)])
+      .catch((err: unknown) => {
+        if (currentVersion === authLoadVersionRef.current) {
+          setError((err as Error).message);
+        }
+      });
   }, [authChecked, authUser]);
+
+  useEffect(() => {
+    setHomeSelectedTeamId("ALL");
+    setHomeStatsTab("bat");
+    setShowUserMenu(false);
+  }, [authUser?.id]);
+
+  useEffect(() => {
+    if (!showUserMenu) {
+      return;
+    }
+
+    const onMouseDown = (event: MouseEvent) => {
+      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
+        setShowUserMenu(false);
+      }
+    };
+
+    document.addEventListener("mousedown", onMouseDown);
+    return () => {
+      document.removeEventListener("mousedown", onMouseDown);
+    };
+  }, [showUserMenu]);
 
   useEffect(() => {
     if (!authUser || !activeMatchId) {
@@ -634,7 +671,7 @@ export default function App(): JSX.Element {
       }
 
       setAuthUser(result.user);
-      setActiveTopTab("setup");
+      setActiveTopTab("home");
       setAuthChecked(true);
       setAuthForm({ name: "", email: "", password: "" });
     } catch (err) {
@@ -662,8 +699,12 @@ export default function App(): JSX.Element {
     }
   }
 
-  async function loadTeams(authUserOverride?: AuthUser | null): Promise<void> {
+  async function loadTeams(authUserOverride?: AuthUser | null, expectedVersion?: number): Promise<void> {
     const data = await api<Team[]>("/teams");
+    if (expectedVersion !== undefined && expectedVersion !== authLoadVersionRef.current) {
+      return;
+    }
+
     setTeams(data);
 
     const currentAuthUser = authUserOverride === undefined ? authUser : authUserOverride;
@@ -677,8 +718,12 @@ export default function App(): JSX.Element {
     }
   }
 
-  async function loadMatches(): Promise<void> {
+  async function loadMatches(expectedVersion?: number): Promise<void> {
     const data = await api<MatchListItem[]>("/matches");
+    if (expectedVersion !== undefined && expectedVersion !== authLoadVersionRef.current) {
+      return;
+    }
+
     setMatches(data);
 
     if (!activeMatchId) {
@@ -690,8 +735,12 @@ export default function App(): JSX.Element {
     }
   }
 
-  async function loadTournaments(): Promise<void> {
+  async function loadTournaments(expectedVersion?: number): Promise<void> {
     const data = await api<Tournament[]>("/tournaments");
+    if (expectedVersion !== undefined && expectedVersion !== authLoadVersionRef.current) {
+      return;
+    }
+
     setTournaments(data);
   }
 
@@ -1193,6 +1242,167 @@ export default function App(): JSX.Element {
     [teams]
   );
 
+  const linkedPlayerIds = useMemo(() => {
+    if (!authUser) {
+      return new Set<string>();
+    }
+
+    const normalizedName = authUser.name.trim().toLowerCase();
+    const ids = new Set<string>();
+
+    teams.forEach((team) => {
+      team.players.forEach((player) => {
+        const matchesUserId = player.userId === authUser.id;
+        const matchesPlayerId = Boolean(player.playerId && player.playerId === authUser.playerId);
+        const matchesName = player.name.trim().toLowerCase() === normalizedName;
+
+        if (matchesUserId || matchesPlayerId || matchesName) {
+          ids.add(player.id);
+        }
+      });
+    });
+
+    return ids;
+  }, [authUser, teams]);
+
+  const homePlayerRows = useMemo(() => {
+    if (!authUser) {
+      return [];
+    }
+
+    const normalizedName = authUser.name.trim().toLowerCase();
+    const linkedRows = playerStatsRows.filter((row) => linkedPlayerIds.has(row.playerId));
+    if (linkedRows.length > 0) {
+      return linkedRows;
+    }
+
+    return playerStatsRows.filter((row) => row.playerName.trim().toLowerCase() === normalizedName);
+  }, [authUser, linkedPlayerIds, playerStatsRows]);
+
+  const homeTeamOptions = useMemo(() => {
+    const unique = new Map<string, { teamId: string; teamName: string; teamShortCode: string }>();
+
+    homePlayerRows.forEach((row) => {
+      if (!unique.has(row.teamId)) {
+        unique.set(row.teamId, {
+          teamId: row.teamId,
+          teamName: row.teamName,
+          teamShortCode: row.teamShortCode
+        });
+      }
+    });
+
+    return Array.from(unique.values());
+  }, [homePlayerRows]);
+
+  useEffect(() => {
+    if (homeSelectedTeamId === "ALL") {
+      return;
+    }
+
+    if (!homeTeamOptions.some((team) => team.teamId === homeSelectedTeamId)) {
+      setHomeSelectedTeamId("ALL");
+    }
+  }, [homeSelectedTeamId, homeTeamOptions]);
+
+  const homeFilteredRows = useMemo(
+    () =>
+      homeSelectedTeamId === "ALL"
+        ? homePlayerRows
+        : homePlayerRows.filter((row) => row.teamId === homeSelectedTeamId),
+    [homePlayerRows, homeSelectedTeamId]
+  );
+
+  const homeAggregatedStats = useMemo(() => {
+    if (homeFilteredRows.length === 0) {
+      return null;
+    }
+
+    const totals = homeFilteredRows.reduce(
+      (acc, row) => {
+        acc.runsScored += row.runsScored;
+        acc.ballsFaced += row.ballsFaced;
+        acc.dismissals += row.dismissals;
+        acc.fours += row.fours;
+        acc.sixes += row.sixes;
+        acc.ballsBowled += row.ballsBowled;
+        acc.wicketsTaken += row.wicketsTaken;
+        acc.runsConceded += row.runsConceded;
+        acc.dotBalls += row.dotBalls;
+        acc.catches += row.catches;
+        acc.stumpings += row.stumpings;
+        acc.runOuts += row.runOuts;
+        return acc;
+      },
+      {
+        runsScored: 0,
+        ballsFaced: 0,
+        dismissals: 0,
+        fours: 0,
+        sixes: 0,
+        ballsBowled: 0,
+        wicketsTaken: 0,
+        runsConceded: 0,
+        dotBalls: 0,
+        catches: 0,
+        stumpings: 0,
+        runOuts: 0
+      }
+    );
+
+    return {
+      ...totals,
+      oversBowled: oversFromBalls(totals.ballsBowled),
+      battingStrikeRate: totals.ballsFaced > 0 ? (totals.runsScored * 100) / totals.ballsFaced : null,
+      battingAverage: totals.dismissals > 0 ? totals.runsScored / totals.dismissals : null,
+      economy: totals.ballsBowled > 0 ? totals.runsConceded / (totals.ballsBowled / 6) : null,
+      bowlingAverage: totals.wicketsTaken > 0 ? totals.runsConceded / totals.wicketsTaken : null,
+      bowlingStrikeRate: totals.wicketsTaken > 0 ? totals.ballsBowled / totals.wicketsTaken : null
+    };
+  }, [homeFilteredRows]);
+
+  const homeDisplayName = homeFilteredRows[0]?.playerName ?? homePlayerRows[0]?.playerName ?? authUser?.name ?? "Player";
+  const homeDisplayRole = homeFilteredRows[0]?.role ?? homePlayerRows[0]?.role ?? "Cricketer";
+  const selectedHomeTeamLabel =
+    homeSelectedTeamId === "ALL"
+      ? "All Teams"
+      : homeTeamOptions.find((team) => team.teamId === homeSelectedTeamId)?.teamName ?? "Team";
+
+  const homeRecentMatches = useMemo(() => {
+    if (homeTeamOptions.length === 0) {
+      return [];
+    }
+
+    const teamIds = new Set(homeTeamOptions.map((team) => team.teamId));
+    const recent = matches
+      .filter((match) => teamIds.has(match.homeTeamId) || teamIds.has(match.awayTeamId))
+      .slice()
+      .reverse()
+      .slice(0, 6);
+
+    return recent.map((match) => {
+      const home = teams.find((team) => team.id === match.homeTeamId);
+      const away = teams.find((team) => team.id === match.awayTeamId);
+      const score = match.innings[match.innings.length - 1];
+      const winner = teams.find((team) => team.id === match.winnerTeamId);
+
+      let result = "Scheduled";
+      if (match.status === "LIVE") {
+        result = "Live";
+      } else if (match.status === "COMPLETED") {
+        result = winner ? `${winner.shortCode} won` : "Tied";
+      }
+
+      return {
+        id: match.id,
+        fixture: `${home?.shortCode ?? "HOME"} vs ${away?.shortCode ?? "AWAY"}`,
+        score: score ? `${score.runs}/${score.wickets} (${oversFromBalls(score.balls)})` : "-",
+        status: match.status,
+        result
+      };
+    });
+  }, [homeTeamOptions, matches, teams]);
+
   const playerStatsByTeam = useMemo(
     () =>
       teams
@@ -1249,47 +1459,259 @@ export default function App(): JSX.Element {
     }
   }
 
-  const authFormSection = (
-    <section className="panel auth-panel auth-card">
-      <div className="tabs auth-tabs">
-        <button type="button" className={authMode === "login" ? "active" : ""} onClick={() => setAuthMode("login")}>
-          Login
-        </button>
-        <button type="button" className={authMode === "register" ? "active" : ""} onClick={() => setAuthMode("register")}>
-          Register
-        </button>
+  const authVisualPanel = (
+    <aside className="auth-visual">
+      <div className="auth-visual-content">
+        <h2>Culbcric</h2>
+        <p className="auth-visual-subtitle">Your ultimate cricket management platform</p>
+        <p className="auth-visual-copy">
+          Track live scores, manage teams and tournaments, and keep every player statistic in one place.
+        </p>
       </div>
-      <form className="auth-form" onSubmit={submitAuth}>
-        {authMode === "register" ? (
+    </aside>
+  );
+
+  const authFormSection = (
+    <section className="auth-screen">
+      {authVisualPanel}
+      <article className="auth-card">
+        <div className="auth-card-inner">
+          <div className="auth-card-head">
+            <h2>{authMode === "register" ? "Create Your Account" : "Welcome to Culbcric"}</h2>
+            <p>
+              {authMode === "register" ? "Sign up to access your cricket world" : "Sign in to continue"}
+            </p>
+          </div>
+          <div className="auth-account-tabs">
+            <button
+              type="button"
+              className={authAccountType === "personal" ? "active" : ""}
+              onClick={() => setAuthAccountType("personal")}
+            >
+              Personal
+            </button>
+            <button
+              type="button"
+              className={authAccountType === "team" ? "active" : ""}
+              onClick={() => setAuthAccountType("team")}
+            >
+              Team
+            </button>
+          </div>
+          <form className="auth-form auth-form-styled" onSubmit={submitAuth}>
+            {authMode === "register" ? (
+              <label>
+                Name
+                <div className="auth-input-wrap icon-user">
+                  <input
+                    value={authForm.name}
+                    onChange={(e) => setAuthForm((prev) => ({ ...prev, name: e.target.value }))}
+                    placeholder="Your name"
+                    required
+                  />
+                </div>
+              </label>
+            ) : null}
+            <label>
+              Email
+              <div className="auth-input-wrap icon-mail">
+                <input
+                  type="email"
+                  value={authForm.email}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
+                  placeholder="name@example.com"
+                  required
+                />
+              </div>
+            </label>
+            <label>
+              Password
+              <div className="auth-input-wrap icon-lock">
+                <input
+                  type="password"
+                  value={authForm.password}
+                  onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
+                  placeholder="Enter password"
+                  required
+                />
+              </div>
+            </label>
+            {authMode === "login" ? (
+              <button
+                type="button"
+                className="auth-inline-link"
+                onClick={() => undefined}
+              >
+                Forgot Password?
+              </button>
+            ) : null}
+            <button disabled={busy}>{authMode === "register" ? "Create Account" : "Sign In"}</button>
+          </form>
+          <div className="auth-switch-row">
+            <span>{authMode === "register" ? "Already have an account?" : "Don't have an account?"}</span>
+            <button
+              type="button"
+              className="auth-inline-link"
+              onClick={() => setAuthMode((prev) => (prev === "login" ? "register" : "login"))}
+            >
+              {authMode === "register" ? "Sign in" : "Create account"}
+            </button>
+          </div>
+        </div>
+      </article>
+    </section>
+  );
+
+  const playerHomePanel = (
+    <section className="player-home">
+      <article className="panel player-home-hero">
+        <div className="player-home-banner" />
+        <div className="player-home-hero-content">
+          <div className="player-home-avatar">{homeDisplayName.charAt(0).toUpperCase()}</div>
+          <div className="player-home-hero-meta">
+            <h2>{homeDisplayName}</h2>
+            <p>{homeTeamOptions.length ? homeTeamOptions.map((team) => team.teamName).join(" • ") : "No teams linked yet"}</p>
+            <div className="player-home-badges">
+              <span className="player-home-badge">{homeDisplayRole}</span>
+              <span className="player-home-badge subtle">{selectedHomeTeamLabel}</span>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <div className="player-home-grid">
+        <article className="panel player-home-info">
+          <h3>Player Information</h3>
+          <div className="player-home-info-list">
+            <div>
+              <small>Name</small>
+              <strong>{authUser?.name ?? "-"}</strong>
+            </div>
+            <div>
+              <small>Player ID</small>
+              <strong>{authUser?.playerId ?? "-"}</strong>
+            </div>
+            <div>
+              <small>Email</small>
+              <strong>{authUser?.email ?? "-"}</strong>
+            </div>
+            <div>
+              <small>Teams</small>
+              <strong>{homeTeamOptions.length}</strong>
+            </div>
+            <div>
+              <small>Admin Teams</small>
+              <strong>{manageableTeams.length}</strong>
+            </div>
+          </div>
           <label>
-            Name
-            <input
-              value={authForm.name}
-              onChange={(e) => setAuthForm((prev) => ({ ...prev, name: e.target.value }))}
-              required
-            />
+            Team Filter
+            <select value={homeSelectedTeamId} onChange={(e) => setHomeSelectedTeamId(e.target.value)}>
+              <option value="ALL">All Teams</option>
+              {homeTeamOptions.map((team) => (
+                <option key={team.teamId} value={team.teamId}>
+                  {team.teamName} ({team.teamShortCode})
+                </option>
+              ))}
+            </select>
           </label>
-        ) : null}
-        <label>
-          Email
-          <input
-            type="email"
-            value={authForm.email}
-            onChange={(e) => setAuthForm((prev) => ({ ...prev, email: e.target.value }))}
-            required
-          />
-        </label>
-        <label>
-          Password
-          <input
-            type="password"
-            value={authForm.password}
-            onChange={(e) => setAuthForm((prev) => ({ ...prev, password: e.target.value }))}
-            required
-          />
-        </label>
-        <button disabled={busy}>{authMode === "register" ? "Create Account" : "Login"}</button>
-      </form>
+        </article>
+
+        <article className="panel player-home-stats">
+          <div className="player-home-stats-head">
+            <h3>Career Statistics</h3>
+            <span>{selectedHomeTeamLabel}</span>
+          </div>
+          <div className="player-home-tabs">
+            <button
+              type="button"
+              className={homeStatsTab === "bat" ? "active" : ""}
+              onClick={() => setHomeStatsTab("bat")}
+            >
+              Bat
+            </button>
+            <button
+              type="button"
+              className={homeStatsTab === "bowl" ? "active" : ""}
+              onClick={() => setHomeStatsTab("bowl")}
+            >
+              Bowl
+            </button>
+            <button
+              type="button"
+              className={homeStatsTab === "field" ? "active" : ""}
+              onClick={() => setHomeStatsTab("field")}
+            >
+              Field
+            </button>
+          </div>
+
+          {!homeAggregatedStats ? (
+            <p className="player-home-empty">No player stats available yet. Create team/player data to populate this profile.</p>
+          ) : null}
+
+          {homeAggregatedStats && homeStatsTab === "bat" ? (
+            <div className="player-home-metrics">
+              <article><small>Runs</small><strong>{homeAggregatedStats.runsScored}</strong></article>
+              <article><small>Balls</small><strong>{homeAggregatedStats.ballsFaced}</strong></article>
+              <article><small>Strike Rate</small><strong>{formatMetric(homeAggregatedStats.battingStrikeRate)}</strong></article>
+              <article><small>Average</small><strong>{formatMetric(homeAggregatedStats.battingAverage)}</strong></article>
+              <article><small>4s</small><strong>{homeAggregatedStats.fours}</strong></article>
+              <article><small>6s</small><strong>{homeAggregatedStats.sixes}</strong></article>
+            </div>
+          ) : null}
+
+          {homeAggregatedStats && homeStatsTab === "bowl" ? (
+            <div className="player-home-metrics">
+              <article><small>Overs</small><strong>{homeAggregatedStats.oversBowled}</strong></article>
+              <article><small>Wickets</small><strong>{homeAggregatedStats.wicketsTaken}</strong></article>
+              <article><small>Runs Conceded</small><strong>{homeAggregatedStats.runsConceded}</strong></article>
+              <article><small>Economy</small><strong>{formatMetric(homeAggregatedStats.economy)}</strong></article>
+              <article><small>Bowling Avg</small><strong>{formatMetric(homeAggregatedStats.bowlingAverage)}</strong></article>
+              <article><small>Strike Rate</small><strong>{formatMetric(homeAggregatedStats.bowlingStrikeRate)}</strong></article>
+            </div>
+          ) : null}
+
+          {homeAggregatedStats && homeStatsTab === "field" ? (
+            <div className="player-home-metrics">
+              <article><small>Catches</small><strong>{homeAggregatedStats.catches}</strong></article>
+              <article><small>Run Outs</small><strong>{homeAggregatedStats.runOuts}</strong></article>
+              <article><small>Stumpings</small><strong>{homeAggregatedStats.stumpings}</strong></article>
+              <article><small>Total Dismissals</small><strong>{homeAggregatedStats.catches + homeAggregatedStats.runOuts + homeAggregatedStats.stumpings}</strong></article>
+            </div>
+          ) : null}
+        </article>
+      </div>
+
+      <article className="panel player-home-recent">
+        <h3>Recent Match Activity</h3>
+        {homeRecentMatches.length === 0 ? (
+          <p className="player-home-empty">No match activity for linked teams yet.</p>
+        ) : (
+          <div className="player-home-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Fixture</th>
+                  <th>Score</th>
+                  <th>Status</th>
+                  <th>Result</th>
+                </tr>
+              </thead>
+              <tbody>
+                {homeRecentMatches.map((item) => (
+                  <tr key={item.id}>
+                    <td>{item.fixture}</td>
+                    <td>{item.score}</td>
+                    <td>{item.status}</td>
+                    <td>{item.result}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </article>
     </section>
   );
 
@@ -1754,14 +2176,12 @@ export default function App(): JSX.Element {
   if (!authChecked) {
     return (
       <div className="auth-shell">
-        <header className="top-nav">
-          <div className="brand-lockup">
-            <h1>Culbcric</h1>
-            <span>Live Scores</span>
-          </div>
-        </header>
-        <section className="panel auth-panel auth-card">
-          <p>Checking your session...</p>
+        <section className="auth-screen">
+          {authVisualPanel}
+          <article className="auth-card auth-loading-card">
+            <h2>Checking your session...</h2>
+            <p>Please wait.</p>
+          </article>
         </section>
       </div>
     );
@@ -1770,12 +2190,6 @@ export default function App(): JSX.Element {
   if (!authUser) {
     return (
       <div className="auth-shell">
-        <header className="top-nav">
-          <div className="brand-lockup">
-            <h1>Culbcric</h1>
-            <span>Live Scores</span>
-          </div>
-        </header>
         {error ? <div className="error">{error}</div> : null}
         {authFormSection}
       </div>
@@ -1789,70 +2203,99 @@ export default function App(): JSX.Element {
           <h1>Culbcric</h1>
           <span>Live Scores</span>
         </div>
-        <nav className="nav-links">
-          <button
-            type="button"
-            className={activeTopTab === "setup" ? "nav-tab active" : "nav-tab"}
-            onClick={() => setActiveTopTab("setup")}
-          >
-            Setup
-          </button>
-          <button
-            type="button"
-            className={activeTopTab === "live" ? "nav-tab active" : "nav-tab"}
-            onClick={() => setActiveTopTab("live")}
-          >
-            Live Center
-          </button>
-          <button
-            type="button"
-            className={activeTopTab === "stats" ? "nav-tab active" : "nav-tab"}
-            onClick={() => setActiveTopTab("stats")}
-          >
-            Stats Table
-          </button>
-        </nav>
+        <div className="nav-right">
+          <nav className="nav-links">
+            <button
+              type="button"
+              className={activeTopTab === "home" ? "nav-tab active" : "nav-tab"}
+              onClick={() => setActiveTopTab("home")}
+            >
+              Home
+            </button>
+            <button
+              type="button"
+              className={activeTopTab === "setup" ? "nav-tab active" : "nav-tab"}
+              onClick={() => setActiveTopTab("setup")}
+            >
+              Setup
+            </button>
+            <button
+              type="button"
+              className={activeTopTab === "live" ? "nav-tab active" : "nav-tab"}
+              onClick={() => setActiveTopTab("live")}
+            >
+              Live Center
+            </button>
+            <button
+              type="button"
+              className={activeTopTab === "stats" ? "nav-tab active" : "nav-tab"}
+              onClick={() => setActiveTopTab("stats")}
+            >
+              Stats Table
+            </button>
+          </nav>
+          <div className="user-menu" ref={userMenuRef}>
+            <button
+              type="button"
+              className="user-menu-trigger"
+              aria-label="Open profile menu"
+              aria-expanded={showUserMenu}
+              onClick={() => setShowUserMenu((prev) => !prev)}
+            >
+              <span />
+              <span />
+              <span />
+            </button>
+            {showUserMenu ? (
+              <div className="user-menu-dropdown">
+                <div className="user-menu-head">
+                  <strong>{authUser.name}</strong>
+                  <p>{authUser.email}</p>
+                  <p>Player ID: {authUser.playerId}</p>
+                </div>
+                <div className="user-menu-admin">
+                  <p>
+                    <strong>Admin Teams ({manageableTeams.length})</strong>
+                  </p>
+                  {manageableTeams.length === 0 ? (
+                    <p>No admin access assigned yet.</p>
+                  ) : (
+                    <ul className="user-menu-admin-list">
+                      {manageableTeams.map((team) => (
+                        <li key={team.id}>
+                          {team.name} ({team.shortCode})
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="secondary"
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    void logout();
+                  }}
+                  disabled={busy}
+                >
+                  Logout
+                </button>
+              </div>
+            ) : null}
+          </div>
+        </div>
       </header>
 
-      <div className="profile-row">
-        <section className="panel profile-panel">
-          <div className="profile-header">
-            <div>
-              <strong>{authUser.name}</strong>
-              <p className="profile-meta">{authUser.email}</p>
-              <p className="profile-meta">Player ID: {authUser.playerId}</p>
-            </div>
-            <button type="button" className="secondary" onClick={() => void logout()} disabled={busy}>
-              Logout
-            </button>
-          </div>
-          <div>
-            <p className="profile-meta">
-              <strong>Admin Teams ({manageableTeams.length})</strong>
-            </p>
-            {manageableTeams.length === 0 ? (
-              <p className="profile-meta">No admin access assigned yet.</p>
-            ) : (
-              <ul className="profile-admin-list">
-                {manageableTeams.map((team) => (
-                  <li key={team.id}>
-                    {team.name} ({team.shortCode})
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-        </section>
-      </div>
-
       {error ? <div className="error">{error}</div> : null}
+
+      {activeTopTab === "home" ? playerHomePanel : null}
 
       {activeTopTab === "setup" ? <section className="setup-layout">
         {createTeamPanel}
         {tournamentPanel}
       </section> : null}
 
-      {activeTopTab !== "setup" ? <section className="ticker-strip">
+      {activeTopTab === "live" || activeTopTab === "stats" ? <section className="ticker-strip">
         {matches.length === 0 ? <p>No matches yet.</p> : null}
         {matches.map((match) => {
           const home = teams.find((team) => team.id === match.homeTeamId);
