@@ -67,6 +67,20 @@ npm run dev:web
 - API: `http://localhost:4000`
 - Web: `http://localhost:5173`
 
+## Match Workflow
+
+1. Create team squads and add players.
+2. Create a scheduled match.
+3. Open `Playing XI + Toss` tab:
+   - Select 11 players for each team.
+   - Set toss winner and decision (bat/bowl).
+   - Click `Start Live Scoring`.
+4. Use quick run/extra/wicket buttons for ball-by-ball updates.
+5. After each over, pick next over bowler from the prompt.
+6. Strike rotates automatically by runs, over-end swap, and wicket context.
+7. Second innings starts automatically when first innings ends.
+8. Match winner is decided automatically and summary is shown when completed.
+
 ## Mobile Expansion Plan
 
 Your backend is already mobile-ready via REST + Socket.IO.
@@ -81,8 +95,13 @@ Detailed roadmap: `docs/mobile-roadmap.md`.
 ## Core Domain Supported
 
 - Team creation and listing
-- Player creation per team and listing
-- Match creation and live status
+- Squad player creation per team and listing
+- Match scheduling (pre-live)
+- Playing XI selection (11 per side) before start
+- Toss winner and decision (bat/bowl)
+- First innings auto-assigned from toss decision
+- Second innings auto-start when first innings ends
+- Winner auto-decided when chase completes or innings ends
 - Ball-by-ball scoring events
 - Realtime score push (`score:update`)
 - Career and match stats persistence per player/team

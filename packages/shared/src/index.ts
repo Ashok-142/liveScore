@@ -13,6 +13,8 @@ export const WICKET_TYPES = [
 export type WicketType = (typeof WICKET_TYPES)[number];
 
 export type MatchStatus = "SCHEDULED" | "LIVE" | "COMPLETED";
+export const TOSS_DECISIONS = ["BAT", "BOWL"] as const;
+export type TossDecision = (typeof TOSS_DECISIONS)[number];
 
 export interface TeamDTO {
   id: string;
@@ -32,6 +34,11 @@ export interface MatchSummaryDTO {
   status: MatchStatus;
   homeTeamId: string;
   awayTeamId: string;
+  winnerTeamId: string | null;
+  tossWinnerTeamId: string | null;
+  tossDecision: TossDecision | null;
+  firstBattingTeamId: string | null;
+  firstBowlingTeamId: string | null;
   currentInnings: number;
   oversLimit: number;
   innings: {
@@ -50,6 +57,8 @@ export interface BallEventInput {
   strikerId: string;
   nonStrikerId: string;
   bowlerId: string;
+  dismissedPlayerId?: string;
+  fielderId?: string;
   runsOffBat: number;
   extraType: ExtraType;
   extraRuns: number;
