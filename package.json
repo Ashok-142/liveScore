@@ -1,0 +1,18 @@
+{
+  "name": "culbcric",
+  "private": true,
+  "version": "0.1.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "predev": "npm run build --workspace @culbcric/shared",
+    "dev": "npm run dev --workspace @culbcric/api & npm run dev --workspace @culbcric/web",
+    "dev:api": "npm run build --workspace @culbcric/shared && npm run dev --workspace @culbcric/api",
+    "dev:web": "npm run build --workspace @culbcric/shared && npm run dev --workspace @culbcric/web",
+    "build": "npm run build --workspace @culbcric/shared && npm run build --workspace @culbcric/api && npm run build --workspace @culbcric/web",
+    "db:generate": "npm run db:generate --workspace @culbcric/api",
+    "db:migrate": "npm run db:migrate --workspace @culbcric/api"
+  }
+}

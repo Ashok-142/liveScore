@@ -1,0 +1,179 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum MatchStatus {
+  SCHEDULED
+  LIVE
+  COMPLETED
+}
+
+enum ExtraType {
+  NONE
+  WIDE
+  NO_BALL
+  BYE
+  LEG_BYE
+}
+
+enum WicketType {
+  BOWLED
+  CAUGHT
+  LBW
+  RUN_OUT
+  STUMPED
+  HIT_WICKET
+  NONE
+}
+
+model Team {
+  id              String           @id @default(cuid())
+  name            String
+  shortCode       String           @unique
+  createdAt       DateTime         @default(now())
+  players         Player[]
+  homeMatches     Match[]          @relation("HomeTeam")
+  awayMatches     Match[]          @relation("AwayTeam")
+  battingInnings  Innings[]        @relation("BattingTeam")
+  bowlingInnings  Innings[]        @relation("BowlingTeam")
+  teamCareerStat  TeamCareerStat?
+  playerMatchStat PlayerMatchStat[]
+}
+
+model Player {
+  id               String            @id @default(cuid())
+  teamId           String
+  name             String
+  role             String
+  createdAt        DateTime          @default(now())
+  team             Team              @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  strikerEvents    BallEvent[]       @relation("Striker")
+  nonStrikerEvents BallEvent[]       @relation("NonStriker")
+  bowlerEvents     BallEvent[]       @relation("Bowler")
+  matchStats       PlayerMatchStat[]
+  careerStat       PlayerCareerStat?
+
+  @@index([teamId])
+}
+
+model Match {
+  id            String            @id @default(cuid())
+  homeTeamId    String
+  awayTeamId    String
+  status        MatchStatus       @default(SCHEDULED)
+  currentInnings Int              @default(1)
+  oversLimit    Int               @default(20)
+  startedAt     DateTime?
+  completedAt   DateTime?
+  winnerTeamId  String?
+  homeTeam      Team              @relation("HomeTeam", fields: [homeTeamId], references: [id])
+  awayTeam      Team              @relation("AwayTeam", fields: [awayTeamId], references: [id])
+  innings       Innings[]
+  events        BallEvent[]
+  playerStats   PlayerMatchStat[]
+
+  @@index([status])
+  @@index([homeTeamId])
+  @@index([awayTeamId])
+}
+
+model Innings {
+  id            String      @id @default(cuid())
+  matchId       String
+  number        Int
+  battingTeamId String
+  bowlingTeamId String
+  runs          Int         @default(0)
+  wickets       Int         @default(0)
+  balls         Int         @default(0)
+  match         Match       @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  battingTeam   Team        @relation("BattingTeam", fields: [battingTeamId], references: [id])
+  bowlingTeam   Team        @relation("BowlingTeam", fields: [bowlingTeamId], references: [id])
+  events        BallEvent[]
+
+  @@unique([matchId, number])
+  @@index([matchId])
+}
+
+model BallEvent {
+  id            String      @id @default(cuid())
+  matchId       String
+  inningsId     String
+  overNumber    Int
+  ballInOver    Int
+  strikerId     String
+  nonStrikerId  String
+  bowlerId      String
+  runsOffBat    Int
+  extraType     ExtraType   @default(NONE)
+  extraRuns     Int         @default(0)
+  isWicket      Boolean     @default(false)
+  wicketType    WicketType  @default(NONE)
+  commentary    String?
+  createdAt     DateTime    @default(now())
+  match         Match       @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  innings       Innings     @relation(fields: [inningsId], references: [id], onDelete: Cascade)
+  striker       Player      @relation("Striker", fields: [strikerId], references: [id])
+  nonStriker    Player      @relation("NonStriker", fields: [nonStrikerId], references: [id])
+  bowler        Player      @relation("Bowler", fields: [bowlerId], references: [id])
+
+  @@index([matchId, createdAt])
+  @@index([inningsId, overNumber])
+}
+
+model PlayerMatchStat {
+  id            String   @id @default(cuid())
+  matchId       String
+  teamId        String
+  playerId      String
+  runsScored    Int      @default(0)
+  ballsFaced    Int      @default(0)
+  fours         Int      @default(0)
+  sixes         Int      @default(0)
+  wicketsTaken  Int      @default(0)
+  ballsBowled   Int      @default(0)
+  runsConceded  Int      @default(0)
+  dotBalls      Int      @default(0)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  match         Match    @relation(fields: [matchId], references: [id], onDelete: Cascade)
+  team          Team     @relation(fields: [teamId], references: [id])
+  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@unique([matchId, playerId])
+  @@index([teamId])
+}
+
+model PlayerCareerStat {
+  id            String   @id @default(cuid())
+  playerId      String   @unique
+  runsScored    Int      @default(0)
+  ballsFaced    Int      @default(0)
+  fours         Int      @default(0)
+  sixes         Int      @default(0)
+  wicketsTaken  Int      @default(0)
+  ballsBowled   Int      @default(0)
+  runsConceded  Int      @default(0)
+  dotBalls      Int      @default(0)
+  updatedAt     DateTime @updatedAt
+  player        Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+}
+
+model TeamCareerStat {
+  id                String   @id @default(cuid())
+  teamId            String   @unique
+  matchesPlayed     Int      @default(0)
+  wins              Int      @default(0)
+  losses            Int      @default(0)
+  totalRunsScored   Int      @default(0)
+  totalRunsConceded Int      @default(0)
+  totalWicketsTaken Int      @default(0)
+  totalWicketsLost  Int      @default(0)
+  updatedAt         DateTime @updatedAt
+  team              Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+}

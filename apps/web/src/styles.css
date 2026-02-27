@@ -1,0 +1,217 @@
+:root {
+  color-scheme: light;
+  font-family: "Manrope", "Segoe UI", sans-serif;
+  line-height: 1.35;
+  background: radial-gradient(circle at top left, #f5faf7 0%, #eef3ff 44%, #f9fbff 100%);
+  color: #15223b;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+}
+
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 1.25rem;
+}
+
+header {
+  margin-bottom: 1rem;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+header p {
+  margin-top: 0.35rem;
+  color: #3a4f76;
+}
+
+.grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+  margin-bottom: 1rem;
+}
+
+.card {
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid #d9e4fb;
+  border-radius: 14px;
+  padding: 1rem;
+  box-shadow: 0 8px 24px rgba(19, 37, 74, 0.08);
+}
+
+.card.tall {
+  min-height: 460px;
+}
+
+form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin-top: 0.75rem;
+}
+
+label {
+  font-size: 0.88rem;
+  color: #3b5072;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+input,
+select,
+button {
+  font: inherit;
+}
+
+input,
+select {
+  border: 1px solid #c5d5f4;
+  border-radius: 8px;
+  padding: 0.5rem 0.6rem;
+  background: #fff;
+}
+
+button {
+  border: none;
+  border-radius: 8px;
+  padding: 0.6rem 0.8rem;
+  background: #1558d6;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
+
+.checkbox-row {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.error {
+  border: 1px solid #f5b4b4;
+  background: #fff4f4;
+  color: #9d2727;
+  padding: 0.7rem;
+  border-radius: 10px;
+  margin-bottom: 0.9rem;
+}
+
+.score {
+  background: #15223b;
+  color: #fff;
+  border-radius: 10px;
+  padding: 0.8rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  margin: 0.7rem 0;
+}
+
+.score span {
+  font-size: 1.6rem;
+  font-weight: 700;
+}
+
+.controls-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin: 0.6rem 0 0.8rem;
+}
+
+.controls-row select {
+  min-width: 170px;
+}
+
+.list {
+  list-style: none;
+  margin: 0.8rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.75rem;
+  background: #f7f9ff;
+  border: 1px solid #e4ebfa;
+  border-radius: 9px;
+  padding: 0.55rem;
+  cursor: pointer;
+}
+
+.list li.selected {
+  border-color: #1558d6;
+  background: #e9f0ff;
+}
+
+.list.compact li {
+  cursor: default;
+}
+
+.list small,
+.list span {
+  color: #425678;
+  font-size: 0.86rem;
+}
+
+.team-grid {
+  margin-top: 0.7rem;
+  display: grid;
+  gap: 0.8rem;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+}
+
+.team-card {
+  border: 1px solid #dbe6ff;
+  border-radius: 10px;
+  padding: 0.75rem;
+  background: #f8fbff;
+}
+
+.team-card h3 {
+  margin-bottom: 0.35rem;
+}
+
+.team-card p {
+  margin-bottom: 0.3rem;
+  color: #445a7f;
+  font-size: 0.86rem;
+}
+
+@media (max-width: 700px) {
+  .page {
+    padding: 0.9rem;
+  }
+
+  .card.tall {
+    min-height: auto;
+  }
+
+  .list li {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
