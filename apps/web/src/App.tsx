@@ -98,6 +98,8 @@ type MatchDetail = {
   awayViceCaptainPlayerId: string | null;
 };
 
+type RecentBallEvent = MatchDetail["recentEvents"][number];
+
 type SetupForm = {
   tossWinnerTeamId: string;
   tossDecision: TossDecision;
@@ -155,6 +157,16 @@ type AuthUser = {
   name: string;
   email: string;
   playerId: string;
+};
+
+type ProfileSetupData = {
+  name: string;
+  role: string;
+  age: string;
+  battingStyle: string;
+  bowlingStyle: string;
+  teams: string[];
+  profileComplete: boolean;
 };
 
 type Tournament = {
@@ -245,6 +257,38 @@ function formatMetric(value: number | null): string {
   return value.toFixed(2);
 }
 
+function runRateFrom(runs: number, balls: number): string {
+  if (balls <= 0) {
+    return "0.00";
+  }
+
+  return ((runs * 6) / balls).toFixed(2);
+}
+
+function ballEventLabel(event: RecentBallEvent): string {
+  if (event.isWicket) {
+    return "W";
+  }
+
+  if (event.extraType === "WIDE") {
+    return "Wd";
+  }
+
+  if (event.extraType === "NO_BALL") {
+    return "Nb";
+  }
+
+  if (event.extraType === "BYE") {
+    return event.extraRuns > 1 ? `B${event.extraRuns}` : "B";
+  }
+
+  if (event.extraType === "LEG_BYE") {
+    return event.extraRuns > 1 ? `Lb${event.extraRuns}` : "Lb";
+  }
+
+  return `${event.runsOffBat}`;
+}
+
 function resolveLeadership(
   selectedXI: string[],
   previousCaptainId: string,
@@ -273,13 +317,25 @@ export default function App(): JSX.Element {
   const [setupMatchId, setSetupMatchId] = useState<string>("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [activeTopTab, setActiveTopTab] = useState<"home" | "setup" | "live" | "stats">("home");
+  const [activeTopTab, setActiveTopTab] = useState<
+    "home" | "tournaments" | "matchSetup" | "live" | "stats"
+  >("home");
   const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authAccountType, setAuthAccountType] = useState<"personal" | "team">("personal");
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [authForm, setAuthForm] = useState({ name: "", email: "", password: "" });
+  const [profileSetup, setProfileSetup] = useState<ProfileSetupData>({
+    name: "",
+    role: "",
+    age: "",
+    battingStyle: "",
+    bowlingStyle: "",
+    teams: [],
+    profileComplete: false
+  });
+  const [profileTeamInput, setProfileTeamInput] = useState("");
   const [homeSelectedTeamId, setHomeSelectedTeamId] = useState<string>("ALL");
   const [homeStatsTab, setHomeStatsTab] = useState<"bat" | "bowl" | "field">("bat");
   const [selectedStatsTeamId, setSelectedStatsTeamId] = useState<string>("");
@@ -293,6 +349,7 @@ export default function App(): JSX.Element {
   const [adminTransferForm, setAdminTransferForm] = useState({ teamId: "", newAdminPlayerId: "" });
   const [tournaments, setTournaments] = useState<Tournament[]>([]);
   const [tournamentForm, setTournamentForm] = useState({ name: "", teamIds: [] as string[] });
+  const [showTournamentCreate, setShowTournamentCreate] = useState(false);
   const [selectedTournamentIdForMatch, setSelectedTournamentIdForMatch] = useState("");
 
   const [setupForm, setSetupForm] = useState<SetupForm>({
@@ -388,6 +445,7 @@ export default function App(): JSX.Element {
       setMatches([]);
       setTournaments([]);
       setTournamentForm({ name: "", teamIds: [] });
+      setShowTournamentCreate(false);
       setSelectedTournamentIdForMatch("");
       setActiveMatchId("");
       setActiveMatch(null);
@@ -409,6 +467,59 @@ export default function App(): JSX.Element {
     setHomeStatsTab("bat");
     setShowUserMenu(false);
   }, [authUser?.id]);
+
+  useEffect(() => {
+    if (!authUser) {
+      setProfileSetup({
+        name: "",
+        role: "",
+        age: "",
+        battingStyle: "",
+        bowlingStyle: "",
+        teams: [],
+        profileComplete: false
+      });
+      setProfileTeamInput("");
+      return;
+    }
+
+    const baseProfile: ProfileSetupData = {
+      name: authUser.name,
+      role: "",
+      age: "",
+      battingStyle: "",
+      bowlingStyle: "",
+      teams: [],
+      profileComplete: false
+    };
+
+    if (typeof window === "undefined") {
+      setProfileSetup(baseProfile);
+      return;
+    }
+
+    const key = `culbcric_profile_${authUser.id}`;
+    const raw = window.localStorage.getItem(key) ?? window.localStorage.getItem("playerProfile");
+    if (!raw) {
+      setProfileSetup(baseProfile);
+      return;
+    }
+
+    try {
+      const parsed = JSON.parse(raw) as Partial<ProfileSetupData>;
+      setProfileSetup({
+        name: parsed.name?.trim() || authUser.name,
+        role: parsed.role ?? "",
+        age: parsed.age ?? "",
+        battingStyle: parsed.battingStyle ?? "",
+        bowlingStyle: parsed.bowlingStyle ?? "",
+        teams: Array.isArray(parsed.teams) ? parsed.teams.filter((team) => typeof team === "string") : [],
+        profileComplete: Boolean(parsed.profileComplete)
+      });
+    } catch {
+      setProfileSetup(baseProfile);
+    }
+  }, [authUser?.id, authUser?.name]);
 
   useEffect(() => {
     if (!showUserMenu) {
@@ -699,6 +810,67 @@ export default function App(): JSX.Element {
     }
   }
 
+  function addProfileTeam(): void {
+    const value = profileTeamInput.trim();
+    if (!value) {
+      return;
+    }
+
+    setProfileSetup((prev) => {
+      if (prev.teams.some((team) => team.toLowerCase() === value.toLowerCase())) {
+        return prev;
+      }
+
+      return {
+        ...prev,
+        teams: [...prev.teams, value]
+      };
+    });
+    setProfileTeamInput("");
+  }
+
+  function removeProfileTeam(teamToRemove: string): void {
+    setProfileSetup((prev) => ({
+      ...prev,
+      teams: prev.teams.filter((team) => team !== teamToRemove)
+    }));
+  }
+
+  function saveProfileSetup(e: FormEvent<HTMLFormElement>): void {
+    e.preventDefault();
+
+    if (!authUser) {
+      return;
+    }
+
+    const isValid =
+      profileSetup.name.trim() &&
+      profileSetup.role &&
+      profileSetup.age &&
+      profileSetup.battingStyle &&
+      profileSetup.teams.length > 0;
+
+    if (!isValid) {
+      setError("Please complete all required profile fields.");
+      return;
+    }
+
+    const nextProfile: ProfileSetupData = {
+      ...profileSetup,
+      name: profileSetup.name.trim(),
+      profileComplete: true
+    };
+
+    if (typeof window !== "undefined") {
+      const key = `culbcric_profile_${authUser.id}`;
+      window.localStorage.setItem(key, JSON.stringify(nextProfile));
+    }
+
+    setError("");
+    setProfileSetup(nextProfile);
+    setActiveTopTab("home");
+  }
+
   async function loadTeams(authUserOverride?: AuthUser | null, expectedVersion?: number): Promise<void> {
     const data = await api<Team[]>("/teams");
     if (expectedVersion !== undefined && expectedVersion !== authLoadVersionRef.current) {
@@ -924,12 +1096,19 @@ export default function App(): JSX.Element {
       });
 
       setTournamentForm({ name: "", teamIds: [] });
+      setShowTournamentCreate(false);
       await loadTournaments();
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setBusy(false);
     }
+  }
+
+  function openMatchSetupFromTournament(tournamentId: string): void {
+    setSelectedTournamentIdForMatch(tournamentId);
+    setSetupTab("create");
+    setActiveTopTab("matchSetup");
   }
 
   function togglePlayingXI(side: "home" | "away", playerId: string): void {
@@ -1165,6 +1344,38 @@ export default function App(): JSX.Element {
     : null;
   const currentInningsTitle = currentInnings ? inningsLabel(currentInnings.number) : "";
   const chaseTarget = currentInnings?.number === 2 && firstInningsSummary ? firstInningsSummary.runs + 1 : null;
+  const currentRunRate = currentInnings ? runRateFrom(currentInnings.runs, currentInnings.balls) : "0.00";
+  const requiredRunRate = useMemo(() => {
+    if (!currentInnings || currentInnings.number !== 2 || chaseTarget === null || !activeMatch) {
+      return null;
+    }
+
+    const ballsRemaining = Math.max(0, activeMatch.summary.oversLimit * 6 - currentInnings.balls);
+    const runsRequired = Math.max(0, chaseTarget - currentInnings.runs);
+
+    if (ballsRemaining === 0) {
+      return "0.00";
+    }
+
+    return runRateFrom(runsRequired, ballsRemaining);
+  }, [activeMatch, chaseTarget, currentInnings]);
+  const overGroups = useMemo(() => {
+    if (!activeMatch) {
+      return [] as { overNumber: number; balls: RecentBallEvent[] }[];
+    }
+
+    const grouped = new Map<number, RecentBallEvent[]>();
+    activeMatch.recentEvents.forEach((event) => {
+      const list = grouped.get(event.overNumber) ?? [];
+      grouped.set(event.overNumber, [...list, event]);
+    });
+
+    return Array.from(grouped.entries())
+      .sort((a, b) => b[0] - a[0])
+      .map(([overNumber, balls]) => ({ overNumber, balls }));
+  }, [activeMatch]);
+  const currentOverBalls = overGroups[0]?.balls ?? [];
+  const previousOverGroups = overGroups.slice(1);
   const activeLeadership = useMemo(() => {
     if (!activeMatch) {
       return new Map<string, string>();
@@ -1192,6 +1403,30 @@ export default function App(): JSX.Element {
   const selectedTournamentForMatch =
     tournaments.find((tournament) => tournament.id === selectedTournamentIdForMatch) ?? null;
   const selectedTournamentTeams = selectedTournamentForMatch?.teams.map((entry) => entry.team) ?? [];
+  const tournamentStatusById = useMemo(() => {
+    const status = new Map<string, "upcoming" | "ongoing" | "completed">();
+
+    tournaments.forEach((tournament) => {
+      const tournamentTeamIds = new Set(tournament.teams.map((entry) => entry.team.id));
+      const tournamentMatches = matches.filter(
+        (match) => tournamentTeamIds.has(match.homeTeamId) && tournamentTeamIds.has(match.awayTeamId)
+      );
+
+      if (tournamentMatches.some((match) => match.status === "LIVE")) {
+        status.set(tournament.id, "ongoing");
+        return;
+      }
+
+      if (tournamentMatches.length > 0 && tournamentMatches.every((match) => match.status === "COMPLETED")) {
+        status.set(tournament.id, "completed");
+        return;
+      }
+
+      status.set(tournament.id, "upcoming");
+    });
+
+    return status;
+  }, [matches, tournaments]);
   const hasStartedMatch = matches.some((match) => match.status !== "SCHEDULED");
 
   const playerStatsRows = useMemo<PlayerStatsRow[]>(
@@ -1361,8 +1596,13 @@ export default function App(): JSX.Element {
     };
   }, [homeFilteredRows]);
 
-  const homeDisplayName = homeFilteredRows[0]?.playerName ?? homePlayerRows[0]?.playerName ?? authUser?.name ?? "Player";
-  const homeDisplayRole = homeFilteredRows[0]?.role ?? homePlayerRows[0]?.role ?? "Cricketer";
+  const homeDisplayName =
+    profileSetup.name.trim() || homeFilteredRows[0]?.playerName || homePlayerRows[0]?.playerName || authUser?.name || "Player";
+  const homeDisplayRole = profileSetup.role || homeFilteredRows[0]?.role || homePlayerRows[0]?.role || "Cricketer";
+  const homeDisplayTeams =
+    profileSetup.profileComplete && profileSetup.teams.length > 0
+      ? profileSetup.teams
+      : homeTeamOptions.map((team) => team.teamName);
   const selectedHomeTeamLabel =
     homeSelectedTeamId === "ALL"
       ? "All Teams"
@@ -1562,6 +1802,134 @@ export default function App(): JSX.Element {
     </section>
   );
 
+  const profileSetupPanel = (
+    <section className="profile-setup-page">
+      <article className="panel profile-setup-card">
+        <div className="profile-setup-head">
+          <h2>Complete Your Cricket Profile</h2>
+          <p>Set up your player information before entering the dashboard.</p>
+        </div>
+        <form className="profile-setup-form" onSubmit={saveProfileSetup}>
+          <label>
+            Full Name
+            <input
+              value={profileSetup.name}
+              onChange={(e) => setProfileSetup((prev) => ({ ...prev, name: e.target.value }))}
+              placeholder="Enter your full name"
+              required
+            />
+          </label>
+
+          <label>
+            Playing Role
+            <select
+              value={profileSetup.role}
+              onChange={(e) => setProfileSetup((prev) => ({ ...prev, role: e.target.value }))}
+              required
+            >
+              <option value="">Select role</option>
+              <option value="Batsman">Batsman</option>
+              <option value="Bowler">Bowler</option>
+              <option value="All-Rounder">All-Rounder</option>
+              <option value="Wicket-Keeper">Wicket-Keeper</option>
+            </select>
+          </label>
+
+          <label>
+            Age
+            <input
+              type="number"
+              min={10}
+              max={100}
+              value={profileSetup.age}
+              onChange={(e) => setProfileSetup((prev) => ({ ...prev, age: e.target.value }))}
+              placeholder="Enter your age"
+              required
+            />
+          </label>
+
+          <label>
+            Batting Style
+            <select
+              value={profileSetup.battingStyle}
+              onChange={(e) => setProfileSetup((prev) => ({ ...prev, battingStyle: e.target.value }))}
+              required
+            >
+              <option value="">Select batting style</option>
+              <option value="Right-Hand Bat">Right-Hand Bat</option>
+              <option value="Left-Hand Bat">Left-Hand Bat</option>
+            </select>
+          </label>
+
+          <label>
+            Bowling Style
+            <select
+              value={profileSetup.bowlingStyle}
+              onChange={(e) => setProfileSetup((prev) => ({ ...prev, bowlingStyle: e.target.value }))}
+            >
+              <option value="">Select bowling style (optional)</option>
+              <option value="Right-Arm Fast">Right-Arm Fast</option>
+              <option value="Left-Arm Fast">Left-Arm Fast</option>
+              <option value="Right-Arm Medium">Right-Arm Medium</option>
+              <option value="Left-Arm Medium">Left-Arm Medium</option>
+              <option value="Right-Arm Off-Spin">Right-Arm Off-Spin</option>
+              <option value="Right-Arm Leg-Spin">Right-Arm Leg-Spin</option>
+              <option value="Left-Arm Orthodox">Left-Arm Orthodox</option>
+              <option value="Left-Arm Chinaman">Left-Arm Chinaman</option>
+              <option value="N/A">N/A</option>
+            </select>
+          </label>
+
+          <div className="profile-team-picker">
+            <label>
+              Teams
+              <div className="profile-team-input-row">
+                <input
+                  value={profileTeamInput}
+                  onChange={(e) => setProfileTeamInput(e.target.value)}
+                  placeholder="Add team name"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addProfileTeam();
+                    }
+                  }}
+                />
+                <button type="button" className="secondary" onClick={addProfileTeam}>
+                  Add
+                </button>
+              </div>
+            </label>
+            <div className="profile-team-chips">
+              {profileSetup.teams.map((team) => (
+                <span key={team} className="profile-team-chip">
+                  {team}
+                  <button type="button" onClick={() => removeProfileTeam(team)} aria-label={`Remove ${team}`}>
+                    x
+                  </button>
+                </span>
+              ))}
+            </div>
+            <p>Add at least one team you've played for.</p>
+          </div>
+
+          <button
+            disabled={
+              busy ||
+              !profileSetup.name.trim() ||
+              !profileSetup.role ||
+              !profileSetup.age ||
+              !profileSetup.battingStyle ||
+              profileSetup.teams.length === 0
+            }
+          >
+            Complete Profile
+          </button>
+        </form>
+      </article>
+    </section>
+  );
+
   const playerHomePanel = (
     <section className="player-home">
       <article className="panel player-home-hero">
@@ -1570,7 +1938,7 @@ export default function App(): JSX.Element {
           <div className="player-home-avatar">{homeDisplayName.charAt(0).toUpperCase()}</div>
           <div className="player-home-hero-meta">
             <h2>{homeDisplayName}</h2>
-            <p>{homeTeamOptions.length ? homeTeamOptions.map((team) => team.teamName).join(" • ") : "No teams linked yet"}</p>
+            <p>{homeDisplayTeams.length ? homeDisplayTeams.join(" • ") : "No teams linked yet"}</p>
             <div className="player-home-badges">
               <span className="player-home-badge">{homeDisplayRole}</span>
               <span className="player-home-badge subtle">{selectedHomeTeamLabel}</span>
@@ -1585,7 +1953,7 @@ export default function App(): JSX.Element {
           <div className="player-home-info-list">
             <div>
               <small>Name</small>
-              <strong>{authUser?.name ?? "-"}</strong>
+              <strong>{profileSetup.name || authUser?.name || "-"}</strong>
             </div>
             <div>
               <small>Player ID</small>
@@ -1597,11 +1965,19 @@ export default function App(): JSX.Element {
             </div>
             <div>
               <small>Teams</small>
-              <strong>{homeTeamOptions.length}</strong>
+              <strong>{homeDisplayTeams.length}</strong>
             </div>
             <div>
-              <small>Admin Teams</small>
-              <strong>{manageableTeams.length}</strong>
+              <small>Age</small>
+              <strong>{profileSetup.age ? `${profileSetup.age} years` : "-"}</strong>
+            </div>
+            <div>
+              <small>Batting Style</small>
+              <strong>{profileSetup.battingStyle || "-"}</strong>
+            </div>
+            <div>
+              <small>Bowling Style</small>
+              <strong>{profileSetup.bowlingStyle || "-"}</strong>
             </div>
           </div>
           <label>
@@ -1716,7 +2092,7 @@ export default function App(): JSX.Element {
   );
 
   const createTeamPanel = (
-    <section className="panel">
+    <section className="panel setup-v4-card setup-v4-team-card">
       <h2>Create Team</h2>
       <form onSubmit={createTeam}>
         <label>
@@ -1854,64 +2230,107 @@ export default function App(): JSX.Element {
   );
 
   const tournamentPanel = (
-    <section className="panel tournament-panel">
-      <h2>Create Tournaments</h2>
-      <form onSubmit={createTournament}>
-        <label>
-          Tournament Name
-          <input
-            value={tournamentForm.name}
-            onChange={(e) => setTournamentForm((prev) => ({ ...prev, name: e.target.value }))}
-            required
-            placeholder="Summer Cup 2026"
-          />
-        </label>
-        <div className="tournament-team-picker">
-          <p>Select Teams ({tournamentForm.teamIds.length})</p>
-          {teams.length < 2 ? <p className="warning">Create at least 2 teams before creating a tournament.</p> : null}
-          <div className="tournament-team-chips">
-            {teams.map((team) => {
-              const selected = tournamentForm.teamIds.includes(team.id);
-              return (
-                <button
-                  type="button"
-                  key={team.id}
-                  className={selected ? "chip selected" : "chip"}
-                  onClick={() => toggleTournamentTeam(team.id)}
-                >
-                  {team.name} ({team.shortCode})
-                </button>
-              );
-            })}
-          </div>
+    <section className="tournaments-v4">
+      <article className="panel tournaments-v4-header">
+        <div>
+          <h2>Tournaments</h2>
+          <p>Create and manage your cricket tournaments</p>
         </div>
-        <button disabled={busy || tournamentForm.teamIds.length < 2}>Create Tournament</button>
-      </form>
+        <button
+          type="button"
+          onClick={() => setShowTournamentCreate((prev) => !prev)}
+          className={showTournamentCreate ? "secondary" : ""}
+        >
+          {showTournamentCreate ? "Close" : "Create Tournament"}
+        </button>
+      </article>
 
-      <div className="tournament-list">
-        <h3>Created Tournaments</h3>
-        {tournaments.length === 0 ? (
-          <p>No tournaments created yet.</p>
-        ) : (
-          <ul className="list compact tournament-items">
-            {tournaments.map((tournament) => (
-              <li key={tournament.id}>
-                <strong>{tournament.name}</strong>
-                <small>
-                  By {tournament.createdBy.name} ({tournament.createdBy.playerId}) on{" "}
-                  {new Date(tournament.createdAt).toLocaleDateString()}
-                </small>
-                <span>
-                  Teams:{" "}
-                  {tournament.teams
-                    .map((entry) => `${entry.team.name} (${entry.team.shortCode})`)
-                    .join(", ")}
-                </span>
-              </li>
-            ))}
-          </ul>
-        )}
+      {showTournamentCreate ? (
+        <article className="panel tournaments-v4-create">
+          <h3>Create New Tournament</h3>
+          <form onSubmit={createTournament}>
+            <label>
+              Tournament Name
+              <input
+                value={tournamentForm.name}
+                onChange={(e) => setTournamentForm((prev) => ({ ...prev, name: e.target.value }))}
+                required
+                placeholder="Summer Cricket League 2026"
+              />
+            </label>
+            <div className="tournament-team-picker">
+              <p>Select Teams ({tournamentForm.teamIds.length})</p>
+              {teams.length < 2 ? <p className="warning">Create at least 2 teams before creating a tournament.</p> : null}
+              <div className="tournament-team-chips">
+                {teams.map((team) => {
+                  const selected = tournamentForm.teamIds.includes(team.id);
+                  return (
+                    <button
+                      type="button"
+                      key={team.id}
+                      className={selected ? "chip selected" : "chip"}
+                      onClick={() => toggleTournamentTeam(team.id)}
+                    >
+                      {team.name} ({team.shortCode})
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+            <button disabled={busy || tournamentForm.teamIds.length < 2}>Create Tournament</button>
+          </form>
+        </article>
+      ) : null}
+
+      {tournaments.length === 0 ? (
+        <article className="panel tournaments-v4-empty">
+          <h3>No Tournaments Yet</h3>
+          <p>Create your first tournament to get started.</p>
+          <button type="button" onClick={() => setShowTournamentCreate(true)}>
+            Create Tournament
+          </button>
+        </article>
+      ) : (
+        <div className="tournaments-v4-grid">
+          {tournaments.map((tournament) => {
+            const status = tournamentStatusById.get(tournament.id) ?? "upcoming";
+            return (
+              <article key={tournament.id} className="panel tournaments-v4-card">
+                <div className="tournament-card-head">
+                  <strong>{tournament.name}</strong>
+                  <span className={`tournament-status ${status}`}>{status}</span>
+                </div>
+                <p>
+                  By {tournament.createdBy.name} ({tournament.createdBy.playerId})
+                </p>
+                <small>Created on {new Date(tournament.createdAt).toLocaleDateString()}</small>
+                <small>{tournament.teams.length} teams</small>
+                <small>Format: T20</small>
+                <div className="tournament-card-chips">
+                  {tournament.teams.map((entry) => (
+                    <span key={entry.id}>{entry.team.shortCode}</span>
+                  ))}
+                </div>
+                <button type="button" onClick={() => openMatchSetupFromTournament(tournament.id)}>
+                  Start Match
+                </button>
+              </article>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+
+  const matchSetupPanel = (
+    <section className="panel tournament-panel setup-v4-card setup-v4-match-card match-setup-v4">
+      <div className="match-setup-v4-top">
+        <h2>Match Setup</h2>
+        <button type="button" className="secondary" onClick={() => setActiveTopTab("tournaments")}>
+          Back to Tournaments
+        </button>
       </div>
+      <p className="match-setup-v4-sub">Configure match details and launch live scoring.</p>
 
       <div className="tournament-list">
         <h3>Start Match (Tournament)</h3>
@@ -1929,68 +2348,87 @@ export default function App(): JSX.Element {
         </div>
 
         {setupTab === "create" ? (
-          <form onSubmit={createMatch}>
-            <label>
-              Tournament
-              <select
-                value={selectedTournamentIdForMatch}
-                onChange={(e) => setSelectedTournamentIdForMatch(e.target.value)}
-                required
-              >
-                <option value="">Select tournament</option>
-                {tournaments.map((tournament) => (
-                  <option key={tournament.id} value={tournament.id}>
-                    {tournament.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Home Team
-              <select
-                value={matchForm.homeTeamId}
-                onChange={(e) => setMatchForm((prev) => ({ ...prev, homeTeamId: e.target.value }))}
-                required
-                disabled={selectedTournamentTeams.length < 2}
-              >
-                <option value="">Select team</option>
-                {selectedTournamentTeams.map((team) => (
-                  <option key={team.id} value={team.id}>
-                    {team.name} ({team.shortCode})
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Away Team
-              <select
-                value={matchForm.awayTeamId}
-                onChange={(e) => setMatchForm((prev) => ({ ...prev, awayTeamId: e.target.value }))}
-                required
-                disabled={selectedTournamentTeams.length < 2}
-              >
-                <option value="">Select team</option>
-                {selectedTournamentTeams
-                  .filter((team) => team.id !== matchForm.homeTeamId)
-                  .map((team) => (
+          <>
+            <form onSubmit={createMatch}>
+              <label>
+                Tournament
+                <select
+                  value={selectedTournamentIdForMatch}
+                  onChange={(e) => setSelectedTournamentIdForMatch(e.target.value)}
+                  required
+                >
+                  <option value="">Select tournament</option>
+                  {tournaments.map((tournament) => (
+                    <option key={tournament.id} value={tournament.id}>
+                      {tournament.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Team 1
+                <select
+                  value={matchForm.homeTeamId}
+                  onChange={(e) => setMatchForm((prev) => ({ ...prev, homeTeamId: e.target.value }))}
+                  required
+                  disabled={selectedTournamentTeams.length < 2}
+                >
+                  <option value="">Select first team</option>
+                  {selectedTournamentTeams.map((team) => (
                     <option key={team.id} value={team.id}>
                       {team.name} ({team.shortCode})
                     </option>
                   ))}
-              </select>
-            </label>
-            <label>
-              Overs
-              <input
-                type="number"
-                min={1}
-                max={50}
-                value={matchForm.oversLimit}
-                onChange={(e) => setMatchForm((prev) => ({ ...prev, oversLimit: Number(e.target.value) }))}
-              />
-            </label>
-            <button disabled={busy || selectedTournamentTeams.length < 2}>Create Scheduled Match</button>
-          </form>
+                </select>
+              </label>
+              <label>
+                Team 2
+                <select
+                  value={matchForm.awayTeamId}
+                  onChange={(e) => setMatchForm((prev) => ({ ...prev, awayTeamId: e.target.value }))}
+                  required
+                  disabled={selectedTournamentTeams.length < 2}
+                >
+                  <option value="">Select second team</option>
+                  {selectedTournamentTeams
+                    .filter((team) => team.id !== matchForm.homeTeamId)
+                    .map((team) => (
+                      <option key={team.id} value={team.id}>
+                        {team.name} ({team.shortCode})
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                Overs per innings
+                <input
+                  type="number"
+                  min={1}
+                  max={50}
+                  value={matchForm.oversLimit}
+                  onChange={(e) => setMatchForm((prev) => ({ ...prev, oversLimit: Number(e.target.value) }))}
+                />
+              </label>
+              <button disabled={busy || selectedTournamentTeams.length < 2}>Create Scheduled Match</button>
+            </form>
+
+            {matchForm.homeTeamId && matchForm.awayTeamId ? (
+              <article className="match-setup-v4-summary">
+                <h4>Match Summary</h4>
+                <p>
+                  <span>Match:</span>{" "}
+                  {teams.find((team) => team.id === matchForm.homeTeamId)?.name ?? "Team 1"} vs{" "}
+                  {teams.find((team) => team.id === matchForm.awayTeamId)?.name ?? "Team 2"}
+                </p>
+                <p>
+                  <span>Format:</span> {matchForm.oversLimit} overs per side
+                </p>
+                <p>
+                  <span>Tournament:</span> {selectedTournamentForMatch?.name ?? "-"}
+                </p>
+              </article>
+            ) : null}
+          </>
         ) : (
           <div className="setup-panel">
             <label>
@@ -2047,6 +2485,29 @@ export default function App(): JSX.Element {
                     ))}
                   </select>
                 </label>
+
+                <article className="match-setup-v4-summary">
+                  <h4>Innings Preview</h4>
+                  <p>
+                    <span>Match:</span> {setupHomeTeam.name} vs {setupAwayTeam.name}
+                  </p>
+                  <p>
+                    <span>Toss:</span>{" "}
+                    {(setupForm.tossWinnerTeamId === setupHomeTeam.id ? setupHomeTeam.name : setupAwayTeam.name) ||
+                      "-"}{" "}
+                    won and chose {setupForm.tossDecision.toLowerCase()}
+                  </p>
+                  <p>
+                    <span>Batting First:</span>{" "}
+                    {setupForm.tossDecision === "BAT"
+                      ? setupForm.tossWinnerTeamId === setupHomeTeam.id
+                        ? setupHomeTeam.name
+                        : setupAwayTeam.name
+                      : setupForm.tossWinnerTeamId === setupHomeTeam.id
+                        ? setupAwayTeam.name
+                        : setupHomeTeam.name}
+                  </p>
+                </article>
 
                 <div className="xi-grid">
                   <div className="xi-column">
@@ -2196,13 +2657,23 @@ export default function App(): JSX.Element {
     );
   }
 
+  if (!profileSetup.profileComplete) {
+    return (
+      <div className="page">
+        <header className="top-nav top-nav-compact">
+          <button type="button" className="secondary" onClick={() => void logout()} disabled={busy}>
+            Logout
+          </button>
+        </header>
+        {error ? <div className="error">{error}</div> : null}
+        {profileSetupPanel}
+      </div>
+    );
+  }
+
   return (
     <div className="page">
       <header className="top-nav">
-        <div className="brand-lockup">
-          <h1>Culbcric</h1>
-          <span>Live Scores</span>
-        </div>
         <div className="nav-right">
           <nav className="nav-links">
             <button
@@ -2214,17 +2685,24 @@ export default function App(): JSX.Element {
             </button>
             <button
               type="button"
-              className={activeTopTab === "setup" ? "nav-tab active" : "nav-tab"}
-              onClick={() => setActiveTopTab("setup")}
+              className={activeTopTab === "tournaments" ? "nav-tab active" : "nav-tab"}
+              onClick={() => setActiveTopTab("tournaments")}
             >
-              Setup
+              Tournaments
+            </button>
+            <button
+              type="button"
+              className={activeTopTab === "matchSetup" ? "nav-tab active" : "nav-tab"}
+              onClick={() => setActiveTopTab("matchSetup")}
+            >
+              Match Setup
             </button>
             <button
               type="button"
               className={activeTopTab === "live" ? "nav-tab active" : "nav-tab"}
               onClick={() => setActiveTopTab("live")}
             >
-              Live Center
+              Live Scoring
             </button>
             <button
               type="button"
@@ -2249,7 +2727,7 @@ export default function App(): JSX.Element {
             {showUserMenu ? (
               <div className="user-menu-dropdown">
                 <div className="user-menu-head">
-                  <strong>{authUser.name}</strong>
+                  <strong>{profileSetup.name || authUser.name}</strong>
                   <p>{authUser.email}</p>
                   <p>Player ID: {authUser.playerId}</p>
                 </div>
@@ -2271,6 +2749,16 @@ export default function App(): JSX.Element {
                 </div>
                 <button
                   type="button"
+                  className="secondary user-menu-edit"
+                  onClick={() => {
+                    setShowUserMenu(false);
+                    setProfileSetup((prev) => ({ ...prev, profileComplete: false }));
+                  }}
+                >
+                  Edit Profile
+                </button>
+                <button
+                  type="button"
                   className="secondary"
                   onClick={() => {
                     setShowUserMenu(false);
@@ -2290,10 +2778,16 @@ export default function App(): JSX.Element {
 
       {activeTopTab === "home" ? playerHomePanel : null}
 
-      {activeTopTab === "setup" ? <section className="setup-layout">
-        {createTeamPanel}
-        {tournamentPanel}
-      </section> : null}
+      {activeTopTab === "tournaments" ? (
+        <section className="tournaments-v4-page">
+          {tournamentPanel}
+          <div className="tournaments-v4-team-block">{createTeamPanel}</div>
+        </section>
+      ) : null}
+
+      {activeTopTab === "matchSetup" ? (
+        <section className="setup-v4-page">{matchSetupPanel}</section>
+      ) : null}
 
       {activeTopTab === "live" || activeTopTab === "stats" ? <section className="ticker-strip">
         {matches.length === 0 ? <p>No matches yet.</p> : null}
@@ -2331,79 +2825,124 @@ export default function App(): JSX.Element {
         })}
       </section> : null}
 
-      {activeTopTab === "live" ? <div className="main-layout">
-        <section className="main-column">
+      {activeTopTab === "live" ? (
+        <section className="live-v4-page">
+          <article className="panel live-v4-page-head">
+            <div className="live-v4-page-head-left">
+              <button type="button" className="secondary" onClick={() => setActiveTopTab("matchSetup")}>
+                Back
+              </button>
+              <div>
+                <h2>Live Match</h2>
+                <p>
+                  {activeHomeTeam && activeAwayTeam
+                    ? `${activeHomeTeam.name} vs ${activeAwayTeam.name}`
+                    : "Select a match to begin scoring"}
+                </p>
+              </div>
+            </div>
+            <span className="live-v4-format-badge">
+              {activeMatch ? `${activeMatch.summary.oversLimit} Overs` : "Format"}
+            </span>
+          </article>
+
           {!hasStartedMatch ? (
-            <article className="panel">
+            <article className="panel live-v4-empty">
               <h2>Live Scoring</h2>
-              <p>Start a scheduled match from the Setup tab to unlock live scoring.</p>
+              <p>Start a scheduled match from the Match Setup page to unlock live scoring.</p>
             </article>
           ) : (
             <>
-          <article className="panel hero-panel">
-            {!activeMatch ? <p>Select a match to view scorecard.</p> : null}
-            {activeMatch ? (
-              <>
-                <div className="hero-meta">
-                  <span className={activeMatch.summary.status === "LIVE" ? "status-pill live" : "status-pill"}>
-                    {activeMatch.summary.status}
-                  </span>
-                  <span>
-                    {activeHomeTeam?.name ?? "Home"} vs {activeAwayTeam?.name ?? "Away"}
-                  </span>
-                  {activeTossWinner ? (
-                    <span>
-                      Toss: {activeTossWinner.shortCode} chose {activeMatch.summary.tossDecision}
-                    </span>
-                  ) : null}
-                </div>
-                <div className="score-rows">
-                  {activeMatch.summary.innings.map((innings) => {
-                    const inningsTeam = teams.find((team) => team.id === innings.battingTeamId);
-                    return (
-                      <div key={innings.id} className="score-row">
-                        <span>{inningsLabel(innings.number)}</span>
-                        <strong>{inningsTeam?.shortCode ?? "TEAM"}</strong>
-                        <strong>
-                          {innings.runs}/{innings.wickets}
-                        </strong>
-                        <span>{innings.overDisplay} overs</span>
+              <article className="panel live-v4-scorecard">
+                {!activeMatch ? <p>Select a match to view scorecard.</p> : null}
+                {activeMatch ? (
+                  <>
+                    <div className="live-v4-head">
+                      <div>
+                        <h2>
+                          {activeHomeTeam?.name ?? "Home"} vs {activeAwayTeam?.name ?? "Away"}
+                        </h2>
+                        <p>
+                          {currentInningsTitle}
+                          {activeTossWinner ? ` · Toss: ${activeTossWinner.shortCode} chose ${activeMatch.summary.tossDecision}` : ""}
+                        </p>
                       </div>
-                    );
-                  })}
-                </div>
-                {matchResultText ? <p className="result-line">{matchResultText}</p> : null}
-              </>
-            ) : null}
-          </article>
+                      <span className={activeMatch.summary.status === "LIVE" ? "status-pill live" : "status-pill"}>
+                        {activeMatch.summary.status}
+                      </span>
+                    </div>
 
-          <article className="panel live-panel">
-            <h2>Live Scoring</h2>
-            {!activeMatchListItem ? <p>Select a match.</p> : null}
+                    <div className="live-v4-main-score">
+                      <strong>
+                        {currentInnings?.runs ?? 0}/{currentInnings?.wickets ?? 0}
+                      </strong>
+                      <p>
+                        Overs {currentInnings?.overDisplay ?? "0.0"} / {activeMatch.summary.oversLimit}
+                      </p>
+                      <p>
+                        {teams.find((team) => team.id === currentInnings?.battingTeamId)?.name ?? "Batting Team"} batting
+                      </p>
+                    </div>
 
-            {activeMatchListItem && activeMatchListItem.status === "SCHEDULED" ? (
-              <p>
-                This match is scheduled. Open Setup tab, then Create Tournaments to select Playing XI and toss,
-                then start live scoring.
-              </p>
-            ) : null}
+                    <div className="live-v4-metrics">
+                      <div>
+                        <small>Run Rate</small>
+                        <strong>{currentRunRate}</strong>
+                      </div>
+                      {chaseTarget !== null ? (
+                        <div>
+                          <small>Target</small>
+                          <strong>{chaseTarget}</strong>
+                        </div>
+                      ) : null}
+                      {requiredRunRate !== null ? (
+                        <div>
+                          <small>Required RR</small>
+                          <strong>{requiredRunRate}</strong>
+                        </div>
+                      ) : null}
+                    </div>
 
-            {!activeMatch || !currentInnings ? null : (
-              <>
-                <div className="score">
-                  <strong>{teams.find((team) => team.id === currentInnings.battingTeamId)?.name ?? "Batting Team"}</strong>
-                  <span>
-                    {currentInnings.runs}/{currentInnings.wickets}
-                  </span>
-                  <small>{currentInningsTitle}</small>
-                  <small>
-                    Overs: {currentInnings.overDisplay} / {activeMatch.summary.oversLimit}
-                  </small>
-                  {chaseTarget ? <small>Target: {chaseTarget}</small> : null}
-                </div>
+                    {matchResultText ? <p className="result-line">{matchResultText}</p> : null}
+                  </>
+                ) : null}
+              </article>
 
-                {isLiveMatch ? (
-                  <div className="quick-score">
+              {currentOverBalls.length > 0 ? (
+                <article className="panel live-v4-current-over">
+                  <h3>Current Over</h3>
+                  <div className="live-v4-ball-row">
+                    {currentOverBalls.map((item) => (
+                      <span
+                        key={item.id}
+                        className={[
+                          "live-v4-ball",
+                          item.isWicket ? "wicket" : "",
+                          item.extraType !== "NONE" ? "extra" : "",
+                          item.runsOffBat >= 4 && item.extraType === "NONE" ? "boundary" : ""
+                        ]
+                          .filter(Boolean)
+                          .join(" ")}
+                      >
+                        {ballEventLabel(item)}
+                      </span>
+                    ))}
+                  </div>
+                </article>
+              ) : null}
+
+              <article className="panel live-v4-controls">
+                <h3>Quick Scoring</h3>
+                {!activeMatchListItem ? <p>Select a match.</p> : null}
+
+                {activeMatchListItem && activeMatchListItem.status === "SCHEDULED" ? (
+                  <p>
+                    This match is scheduled. Open Match Setup page, complete Playing XI and toss, then start live scoring.
+                  </p>
+                ) : null}
+
+                {!activeMatch || !currentInnings ? null : (
+                  <>
                     {showBowlerPrompt ? (
                       <div className="overlay">
                         <div className="overlay-card">
@@ -2423,344 +2962,375 @@ export default function App(): JSX.Element {
                       </div>
                     ) : null}
 
-                    <div className="selector-row">
-                      <label>
-                        Striker
-                        <select
-                          value={eventActors.strikerId}
-                          onChange={(e) => setEventActors((prev) => ({ ...prev, strikerId: e.target.value }))}
-                          disabled={showBowlerPrompt}
-                        >
-                          {battingTeamPlayers.map((player) => (
-                            <option key={player.id} value={player.id}>
-                              {player.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                    {isLiveMatch ? (
+                      <div className="quick-score">
+                        <div className="selector-row">
+                          <label>
+                            Striker
+                            <select
+                              value={eventActors.strikerId}
+                              onChange={(e) => setEventActors((prev) => ({ ...prev, strikerId: e.target.value }))}
+                              disabled={showBowlerPrompt}
+                            >
+                              {battingTeamPlayers.map((player) => (
+                                <option key={player.id} value={player.id}>
+                                  {player.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
 
-                      <label>
-                        Non-striker
-                        <select
-                          value={eventActors.nonStrikerId}
-                          onChange={(e) => setEventActors((prev) => ({ ...prev, nonStrikerId: e.target.value }))}
-                          disabled={showBowlerPrompt}
-                        >
-                          {battingTeamPlayers.map((player) => (
-                            <option key={player.id} value={player.id}>
-                              {player.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                          <label>
+                            Non-striker
+                            <select
+                              value={eventActors.nonStrikerId}
+                              onChange={(e) => setEventActors((prev) => ({ ...prev, nonStrikerId: e.target.value }))}
+                              disabled={showBowlerPrompt}
+                            >
+                              {battingTeamPlayers.map((player) => (
+                                <option key={player.id} value={player.id}>
+                                  {player.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
 
-                      <label>
-                        Bowler
-                        <select
-                          value={eventActors.bowlerId}
-                          onChange={(e) => setEventActors((prev) => ({ ...prev, bowlerId: e.target.value }))}
-                          disabled={showBowlerPrompt}
-                        >
-                          {bowlingTeamPlayers.map((player) => (
-                            <option key={player.id} value={player.id}>
-                              {player.name}
-                            </option>
-                          ))}
-                        </select>
-                      </label>
+                          <label>
+                            Bowler
+                            <select
+                              value={eventActors.bowlerId}
+                              onChange={(e) => setEventActors((prev) => ({ ...prev, bowlerId: e.target.value }))}
+                              disabled={showBowlerPrompt}
+                            >
+                              {bowlingTeamPlayers.map((player) => (
+                                <option key={player.id} value={player.id}>
+                                  {player.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
 
-                      <button type="button" onClick={swapBatters} className="secondary" disabled={showBowlerPrompt}>
-                        Swap Strike
-                      </button>
-                    </div>
-
-                    <label>
-                      Quick Commentary (optional)
-                      <input
-                        value={commentary}
-                        onChange={(e) => setCommentary(e.target.value)}
-                        placeholder="Optional short note"
-                        maxLength={240}
-                        disabled={showBowlerPrompt}
-                      />
-                    </label>
-
-                    <div className="quick-actions">
-                      <h3>Runs (one click)</h3>
-                      <div className="button-row">
-                        {[0, 1, 2, 3, 4, 6].map((run) => (
-                          <button
-                            type="button"
-                            key={run}
-                            onClick={() =>
-                              void submitBallEvent({
-                                runsOffBat: run,
-                                extraType: "NONE",
-                                extraRuns: 0,
-                                isWicket: false,
-                                wicketType: "NONE"
-                              })
-                            }
-                            disabled={scoringLocked}
-                          >
-                            {run}
+                          <button type="button" onClick={swapBatters} className="secondary" disabled={showBowlerPrompt}>
+                            Swap Strike
                           </button>
-                        ))}
-                      </div>
-                    </div>
+                        </div>
 
-                    <div className="quick-actions">
-                      <h3>Extras (one click)</h3>
-                      <div className="button-row">
-                        <button
-                          type="button"
-                          disabled={scoringLocked}
-                          onClick={() =>
-                            void submitBallEvent({
-                              runsOffBat: 0,
-                              extraType: "WIDE",
-                              extraRuns: 1,
-                              isWicket: false,
-                              wicketType: "NONE"
-                            })
-                          }
-                        >
-                          Wide +1
-                        </button>
-                        <button
-                          type="button"
-                          disabled={scoringLocked}
-                          onClick={() =>
-                            void submitBallEvent({
-                              runsOffBat: 0,
-                              extraType: "NO_BALL",
-                              extraRuns: 1,
-                              isWicket: false,
-                              wicketType: "NONE"
-                            })
-                          }
-                        >
-                          No Ball +1
-                        </button>
-                        <button
-                          type="button"
-                          disabled={scoringLocked}
-                          onClick={() =>
-                            void submitBallEvent({
-                              runsOffBat: 0,
-                              extraType: "BYE",
-                              extraRuns: 1,
-                              isWicket: false,
-                              wicketType: "NONE"
-                            })
-                          }
-                        >
-                          Bye +1
-                        </button>
-                        <button
-                          type="button"
-                          disabled={scoringLocked}
-                          onClick={() =>
-                            void submitBallEvent({
-                              runsOffBat: 0,
-                              extraType: "LEG_BYE",
-                              extraRuns: 1,
-                              isWicket: false,
-                              wicketType: "NONE"
-                            })
-                          }
-                        >
-                          Leg Bye +1
-                        </button>
-                      </div>
-                    </div>
-
-                    <div className="quick-actions">
-                      <h3>Wicket</h3>
-                      <div className="button-row">
-                        <select
-                          value={quickWicketType}
-                          onChange={(e) => setQuickWicketType(e.target.value as BallEventInput["wicketType"])}
-                          disabled={showBowlerPrompt}
-                        >
-                          {WICKET_TYPES.filter((value) => value !== "NONE").map((value) => (
-                            <option key={value} value={value}>
-                              {value}
-                            </option>
-                          ))}
-                        </select>
-                        {quickWicketType === "RUN_OUT" ? (
-                          <select
-                            value={quickDismissedBatter}
-                            onChange={(e) => setQuickDismissedBatter(e.target.value as DismissedBatter)}
-                            disabled={showBowlerPrompt}
-                          >
-                            <option value="STRIKER">Out: Striker</option>
-                            <option value="NON_STRIKER">Out: Non-striker</option>
-                          </select>
-                        ) : null}
-                        {["CAUGHT", "RUN_OUT", "STUMPED"].includes(quickWicketType) ? (
-                          <select
-                            value={quickFielderId}
-                            onChange={(e) => setQuickFielderId(e.target.value)}
-                            disabled={showBowlerPrompt || bowlingTeamPlayers.length === 0}
-                          >
-                            {bowlingTeamPlayers.length === 0 ? <option value="">No fielder available</option> : null}
-                            {bowlingTeamPlayers.map((player) => (
-                              <option key={player.id} value={player.id}>
-                                Fielder: {player.name}
-                              </option>
-                            ))}
-                          </select>
-                        ) : null}
-                        <select
-                          value={quickIncomingBatterId}
-                          onChange={(e) => setQuickIncomingBatterId(e.target.value)}
-                          disabled={showBowlerPrompt || nextBatterOptions.length === 0}
-                        >
-                          {nextBatterOptions.length === 0 ? <option value="">No batter available</option> : null}
-                          {nextBatterOptions.map((player) => (
-                            <option key={player.id} value={player.id}>
-                              Incoming: {player.name}
-                            </option>
-                          ))}
-                        </select>
-                        <label className="checkbox-row inline-check">
+                        <label>
+                          Quick Commentary (optional)
                           <input
-                            type="checkbox"
-                            checked={quickCrossedBeforeDismissal}
-                            onChange={(e) => setQuickCrossedBeforeDismissal(e.target.checked)}
+                            value={commentary}
+                            onChange={(e) => setCommentary(e.target.value)}
+                            placeholder="Optional short note"
+                            maxLength={240}
                             disabled={showBowlerPrompt}
                           />
-                          Crossed before dismissal
                         </label>
-                        <button
-                          type="button"
-                          disabled={
-                            scoringLocked ||
-                            !quickIncomingBatterId ||
-                            (["CAUGHT", "RUN_OUT", "STUMPED"].includes(quickWicketType) && !quickFielderId)
-                          }
-                          onClick={() =>
-                            void submitBallEvent({
-                              runsOffBat: 0,
-                              extraType: "NONE",
-                              extraRuns: 0,
-                              isWicket: true,
-                              wicketType: quickWicketType,
-                              dismissedBatter: quickWicketType === "RUN_OUT" ? quickDismissedBatter : "STRIKER",
-                              incomingBatterId: quickIncomingBatterId,
-                              crossedBeforeDismissal: quickCrossedBeforeDismissal,
-                              fielderId: ["CAUGHT", "RUN_OUT", "STUMPED"].includes(quickWicketType) ? quickFielderId : undefined
-                            })
-                          }
-                        >
-                          Add Wicket
-                        </button>
+
+                        <div className="quick-actions">
+                          <h4>Runs</h4>
+                          <div className="live-v4-run-grid">
+                            {[0, 1, 2, 3, 4, 6].map((run) => (
+                              <button
+                                type="button"
+                                key={run}
+                                className={run >= 4 ? "live-v4-run-btn boundary" : "live-v4-run-btn"}
+                                onClick={() =>
+                                  void submitBallEvent({
+                                    runsOffBat: run,
+                                    extraType: "NONE",
+                                    extraRuns: 0,
+                                    isWicket: false,
+                                    wicketType: "NONE"
+                                  })
+                                }
+                                disabled={scoringLocked}
+                              >
+                                {run}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="quick-actions">
+                          <h4>Extras</h4>
+                          <div className="live-v4-extra-grid">
+                            <button
+                              type="button"
+                              disabled={scoringLocked}
+                              onClick={() =>
+                                void submitBallEvent({
+                                  runsOffBat: 0,
+                                  extraType: "WIDE",
+                                  extraRuns: 1,
+                                  isWicket: false,
+                                  wicketType: "NONE"
+                                })
+                              }
+                            >
+                              Wide
+                            </button>
+                            <button
+                              type="button"
+                              disabled={scoringLocked}
+                              onClick={() =>
+                                void submitBallEvent({
+                                  runsOffBat: 0,
+                                  extraType: "NO_BALL",
+                                  extraRuns: 1,
+                                  isWicket: false,
+                                  wicketType: "NONE"
+                                })
+                              }
+                            >
+                              No Ball
+                            </button>
+                            <button
+                              type="button"
+                              disabled={scoringLocked}
+                              onClick={() =>
+                                void submitBallEvent({
+                                  runsOffBat: 0,
+                                  extraType: "BYE",
+                                  extraRuns: 1,
+                                  isWicket: false,
+                                  wicketType: "NONE"
+                                })
+                              }
+                            >
+                              Bye
+                            </button>
+                            <button
+                              type="button"
+                              disabled={scoringLocked}
+                              onClick={() =>
+                                void submitBallEvent({
+                                  runsOffBat: 0,
+                                  extraType: "LEG_BYE",
+                                  extraRuns: 1,
+                                  isWicket: false,
+                                  wicketType: "NONE"
+                                })
+                              }
+                            >
+                              Leg Bye
+                            </button>
+                          </div>
+                        </div>
+
+                        <div className="quick-actions">
+                          <h4>Wicket</h4>
+                          <div className="live-v4-wicket-grid">
+                            <select
+                              value={quickWicketType}
+                              onChange={(e) => setQuickWicketType(e.target.value as BallEventInput["wicketType"])}
+                              disabled={showBowlerPrompt}
+                            >
+                              {WICKET_TYPES.filter((value) => value !== "NONE").map((value) => (
+                                <option key={value} value={value}>
+                                  {value}
+                                </option>
+                              ))}
+                            </select>
+                            {quickWicketType === "RUN_OUT" ? (
+                              <select
+                                value={quickDismissedBatter}
+                                onChange={(e) => setQuickDismissedBatter(e.target.value as DismissedBatter)}
+                                disabled={showBowlerPrompt}
+                              >
+                                <option value="STRIKER">Out: Striker</option>
+                                <option value="NON_STRIKER">Out: Non-striker</option>
+                              </select>
+                            ) : null}
+                            {["CAUGHT", "RUN_OUT", "STUMPED"].includes(quickWicketType) ? (
+                              <select
+                                value={quickFielderId}
+                                onChange={(e) => setQuickFielderId(e.target.value)}
+                                disabled={showBowlerPrompt || bowlingTeamPlayers.length === 0}
+                              >
+                                {bowlingTeamPlayers.length === 0 ? <option value="">No fielder available</option> : null}
+                                {bowlingTeamPlayers.map((player) => (
+                                  <option key={player.id} value={player.id}>
+                                    Fielder: {player.name}
+                                  </option>
+                                ))}
+                              </select>
+                            ) : null}
+                            <select
+                              value={quickIncomingBatterId}
+                              onChange={(e) => setQuickIncomingBatterId(e.target.value)}
+                              disabled={showBowlerPrompt || nextBatterOptions.length === 0}
+                            >
+                              {nextBatterOptions.length === 0 ? <option value="">No batter available</option> : null}
+                              {nextBatterOptions.map((player) => (
+                                <option key={player.id} value={player.id}>
+                                  Incoming: {player.name}
+                                </option>
+                              ))}
+                            </select>
+                            <label className="checkbox-row inline-check">
+                              <input
+                                type="checkbox"
+                                checked={quickCrossedBeforeDismissal}
+                                onChange={(e) => setQuickCrossedBeforeDismissal(e.target.checked)}
+                                disabled={showBowlerPrompt}
+                              />
+                              Crossed before dismissal
+                            </label>
+                            <button
+                              type="button"
+                              disabled={
+                                scoringLocked ||
+                                !quickIncomingBatterId ||
+                                (["CAUGHT", "RUN_OUT", "STUMPED"].includes(quickWicketType) && !quickFielderId)
+                              }
+                              onClick={() =>
+                                void submitBallEvent({
+                                  runsOffBat: 0,
+                                  extraType: "NONE",
+                                  extraRuns: 0,
+                                  isWicket: true,
+                                  wicketType: quickWicketType,
+                                  dismissedBatter: quickWicketType === "RUN_OUT" ? quickDismissedBatter : "STRIKER",
+                                  incomingBatterId: quickIncomingBatterId,
+                                  crossedBeforeDismissal: quickCrossedBeforeDismissal,
+                                  fielderId: ["CAUGHT", "RUN_OUT", "STUMPED"].includes(quickWicketType)
+                                    ? quickFielderId
+                                    : undefined
+                                })
+                              }
+                            >
+                              Add Wicket
+                            </button>
+                          </div>
+                        </div>
                       </div>
-                    </div>
-                  </div>
-                ) : (
-                  <p>This match is completed. Ball scoring is locked.</p>
+                    ) : (
+                      <p>This match is completed. Ball scoring is locked.</p>
+                    )}
+                  </>
                 )}
-              </>
-            )}
-          </article>
+              </article>
 
-          <article className="panel">
-            <h2>Recent Balls</h2>
-            <ul className="list compact">
-              {activeMatch?.recentEvents.map((item) => (
-                <li key={item.id}>
-                  <strong>
-                    {item.overNumber}.{item.ballInOver}
-                  </strong>
-                  <span>
-                    {item.striker.name} vs {item.bowler.name}: {item.runsOffBat}+{item.extraRuns} ({item.extraType})
-                    {item.isWicket ? ` WICKET(${item.wicketType})` : ""}
-                  </span>
-                </li>
-              ))}
-            </ul>
-          </article>
+              <article className="panel live-v4-over-history">
+                <h3>Previous Overs</h3>
+                {previousOverGroups.length === 0 ? (
+                  <p>No completed overs yet.</p>
+                ) : (
+                  <div className="live-v4-over-list">
+                    {previousOverGroups.map((over) => (
+                      <div key={over.overNumber} className="live-v4-over-row">
+                        <span>Over {over.overNumber}</span>
+                        <div className="live-v4-ball-row">
+                          {over.balls.map((item) => (
+                            <span
+                              key={item.id}
+                              className={[
+                                "live-v4-ball small",
+                                item.isWicket ? "wicket" : "",
+                                item.extraType !== "NONE" ? "extra" : "",
+                                item.runsOffBat >= 4 && item.extraType === "NONE" ? "boundary" : ""
+                              ]
+                                .filter(Boolean)
+                                .join(" ")}
+                            >
+                              {ballEventLabel(item)}
+                            </span>
+                          ))}
+                        </div>
+                        <small>{over.balls.reduce((sum, item) => sum + item.runsOffBat + item.extraRuns, 0)} runs</small>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </article>
 
-          {activeMatch?.summary.status === "COMPLETED" ? (
-            <article className="panel summary-card">
-              <h3>Match Summary</h3>
-              {matchResultText ? <p>{matchResultText}</p> : null}
-              <p>
-                Toss: {activeTossWinner?.name ?? "N/A"} elected to {activeMatch.summary.tossDecision ?? "N/A"}
-              </p>
-              <p>
-                1st Innings: {teams.find((team) => team.id === firstInningsSummary?.battingTeamId)?.shortCode ?? "--"}{" "}
-                {firstInningsSummary?.runs ?? 0}/{firstInningsSummary?.wickets ?? 0} ({firstInningsSummary?.overDisplay ?? "0.0"})
-              </p>
-              <p>
-                2nd Innings: {teams.find((team) => team.id === secondInningsSummary?.battingTeamId)?.shortCode ?? "--"}{" "}
-                {secondInningsSummary?.runs ?? 0}/{secondInningsSummary?.wickets ?? 0} ({secondInningsSummary?.overDisplay ?? "0.0"})
-              </p>
-            </article>
-          ) : null}
+              <article className="panel live-v4-recent">
+                <h3>Recent Balls</h3>
+                <ul className="list compact">
+                  {activeMatch?.recentEvents.map((item) => (
+                    <li key={item.id}>
+                      <strong>
+                        {item.overNumber}.{item.ballInOver}
+                      </strong>
+                      <span>
+                        {item.striker.name} vs {item.bowler.name}: {item.runsOffBat}+{item.extraRuns} ({item.extraType})
+                        {item.isWicket ? ` WICKET(${item.wicketType})` : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </article>
+
+              {activeMatch?.summary.status === "COMPLETED" ? (
+                <article className="panel summary-card">
+                  <h3>Match Summary</h3>
+                  {matchResultText ? <p>{matchResultText}</p> : null}
+                  <p>
+                    Toss: {activeTossWinner?.name ?? "N/A"} elected to {activeMatch.summary.tossDecision ?? "N/A"}
+                  </p>
+                  <p>
+                    1st Innings: {teams.find((team) => team.id === firstInningsSummary?.battingTeamId)?.shortCode ?? "--"}{" "}
+                    {firstInningsSummary?.runs ?? 0}/{firstInningsSummary?.wickets ?? 0} (
+                    {firstInningsSummary?.overDisplay ?? "0.0"})
+                  </p>
+                  <p>
+                    2nd Innings: {teams.find((team) => team.id === secondInningsSummary?.battingTeamId)?.shortCode ?? "--"}{" "}
+                    {secondInningsSummary?.runs ?? 0}/{secondInningsSummary?.wickets ?? 0} (
+                    {secondInningsSummary?.overDisplay ?? "0.0"})
+                  </p>
+                </article>
+              ) : null}
+
+              <article className="panel live-v4-match-list">
+                <h3>Matches</h3>
+                <div className="live-v4-match-grid">
+                  {matches.map((match) => {
+                    const home = teams.find((team) => team.id === match.homeTeamId);
+                    const away = teams.find((team) => team.id === match.awayTeamId);
+                    const latestInnings = match.innings[match.innings.length - 1];
+                    const tossWinner = teams.find((team) => team.id === match.tossWinnerTeamId);
+
+                    return (
+                      <button
+                        key={match.id}
+                        type="button"
+                        className={activeMatchId === match.id ? "live-v4-match-tile active" : "live-v4-match-tile"}
+                        onClick={() => {
+                          setActiveMatchId(match.id);
+                          if (match.status === "SCHEDULED") {
+                            setSetupMatchId(match.id);
+                            setActiveTopTab("matchSetup");
+                            setSetupTab("playingXI");
+                          }
+                        }}
+                      >
+                        <strong>
+                          {home?.shortCode ?? "HOME"} vs {away?.shortCode ?? "AWAY"}
+                        </strong>
+                        <small>{match.status}</small>
+                        {match.tossWinnerTeamId && match.tossDecision ? (
+                          <small>
+                            Toss: {tossWinner?.shortCode ?? "--"} chose {match.tossDecision}
+                          </small>
+                        ) : (
+                          <small>Toss pending</small>
+                        )}
+                        {latestInnings ? (
+                          <small>
+                            {latestInnings.runs}/{latestInnings.wickets} ({oversFromBalls(latestInnings.balls)})
+                          </small>
+                        ) : (
+                          <small>Score not started</small>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              </article>
             </>
           )}
         </section>
-
-        <aside className="right-column">
-          <article className="panel">
-            <h2>Matches</h2>
-            <ul className="list">
-              {matches.map((match) => {
-                const home = teams.find((team) => team.id === match.homeTeamId);
-                const away = teams.find((team) => team.id === match.awayTeamId);
-                const latestInnings = match.innings[match.innings.length - 1];
-                const tossWinner = teams.find((team) => team.id === match.tossWinnerTeamId);
-
-                return (
-                  <li
-                    key={match.id}
-                    className={activeMatchId === match.id ? "selected" : ""}
-                    onClick={() => {
-                      setActiveMatchId(match.id);
-                      if (match.status === "SCHEDULED") {
-                        setSetupMatchId(match.id);
-                        setActiveTopTab("setup");
-                        setSetupTab("playingXI");
-                      }
-                    }}
-                  >
-                    <strong>
-                      {home?.shortCode ?? "HOME"} vs {away?.shortCode ?? "AWAY"}
-                    </strong>
-                    <span>{match.status}</span>
-                    {match.tossWinnerTeamId && match.tossDecision ? (
-                      <small>
-                        Toss: {tossWinner?.shortCode ?? "--"} chose {match.tossDecision}
-                      </small>
-                    ) : (
-                      <small>Toss pending</small>
-                    )}
-                    {latestInnings ? (
-                      <small>
-                        {latestInnings.runs}/{latestInnings.wickets} ({oversFromBalls(latestInnings.balls)})
-                      </small>
-                    ) : (
-                      <small>Score not started</small>
-                    )}
-                    {match.status === "COMPLETED" ? (
-                      <small>
-                        Result:{" "}
-                        {match.winnerTeamId
-                          ? `${teams.find((team) => team.id === match.winnerTeamId)?.shortCode ?? "Team"} won`
-                          : "Tie"}
-                      </small>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          </article>
-        </aside>
-      </div> : null}
+      ) : null}
 
       {activeTopTab === "stats" ? (
         <section className="panel stats-panel">
